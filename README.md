@@ -1,4 +1,4 @@
-# TripGenie — AI Multi-Agent Travel Planner
+# TripGenie — AI Agent Travel Planner
 
 This is a planning-only application. It does not book tickets, reserve hotel rooms, or process payments. Provider availability, prices, and quotas depend on the configured API accounts.
 

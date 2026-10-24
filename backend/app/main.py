@@ -19,19 +19,17 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Local development origins are included by default. For deployment, set
-# FRONTEND_ORIGINS to a comma-separated list of exact frontend origins.
-# Example: https://tripgenie.vercel.app,https://www.example.com
-_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
-_allowed_origins = [
-    origin.strip().rstrip("/")
-    for origin in os.getenv("FRONTEND_ORIGINS", _default_origins).split(",")
-    if origin.strip()
+from fastapi.middleware.cors import CORSMiddleware
+
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://trip-genie-ai-multi-agent-travel-pl.vercel.app",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -121,7 +121,7 @@ def get_fares(train_no, from_code, to_code):
     return fares
 
 
-def search_trains(source_city, destination_city, date_value, travelers, limit=4, fare_lookups=3):
+def search_trains(source_city, destination_city, date_value, travelers, limit=5, fare_lookups=5):
     """Return normalised train journeys with live schedule and (when available) fares."""
     if not is_configured():
         return []

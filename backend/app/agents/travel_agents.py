@@ -13,7 +13,7 @@ from ..services.fare_estimator import (
     estimate_train_fares,
     format_minutes,
 )
-from ..services import rail_api
+from ..services import rail_api, bus_api
 from ..services.hotel_service import (
     DEFAULT_ROOM_NIGHT_INR,
     booking_search_url,
@@ -182,6 +182,12 @@ class TransportAgent:
     def _transit_for_direction(self, mode, src, dst, travelers, date_value, direction):
         items = []
 
+        if mode == "train" and not rail_api.is_configured() and direction == "outbound":
+            self.notes.append(
+                "Train names and exact timetable need RAIL_API_KEY (see API_SETUP_GUIDE.md). "
+                "Without it, times appear only if Google Routes has that railway schedule."
+            )
+
         # 1) Real train timetable + fares (optional paid provider)
         if mode == "train" and rail_api.is_configured() and date_value:
             try:
@@ -191,15 +197,35 @@ class TransportAgent:
                     distance = get_driving_distance_km(src, dst)
                 for journey in journeys:
                     items.append(_rail_item(journey, direction, travelers, distance))
+                if not journeys:
+                    self.notes.append(
+                        f"Rail API returned no trains for {src} → {dst}. Check RAIL_API_KEY/RAIL_API_HOST "
+                        "and the backend log (station code may be unknown)."
+                    )
             except Exception as error:
                 print("Rail API failed:", error)
+
+        # 1b) Live bus fares + times (optional Apify redBus actor)
+        if mode == "bus" and bus_api.is_configured() and date_value:
+            try:
+                items = bus_api.search_buses(src, dst, date_value, travelers, direction)
+            except Exception as error:
+                print("Bus API failed:", error)
+                items = []
+            if not items:
+                self.notes.append(f"Live bus search found no buses for {src} → {dst} ({direction}); showing fallback data.")
+        elif mode == "bus" and direction == "outbound" and not bus_api.is_configured():
+            self.notes.append(
+                "Live bus names, times and fares need APIFY_TOKEN (see API_SETUP_GUIDE.md). "
+                "Showing Google route data or a labelled estimate instead."
+            )
 
         # 2) Google Routes: stations + clock times (when Google has the schedule)
         if not items:
             try:
                 result = get_transit_options(
                     source=src, destination=dst, travelers=travelers, allowed_mode=mode,
-                    departure_time=_transit_departure_time(date_value, hour=9), limit=3,
+                    departure_time=_transit_departure_time(date_value, hour=9), limit=5,
                 )
                 print(f"{mode.title()} {direction} Google result:", result.get("available"), result.get("message", ""))
                 for option in result.get("options", []):
@@ -222,7 +248,10 @@ class TransportAgent:
         self.notes = []
         source = normalize_destination(source)
         destination = normalize_destination(destination)
-        option = (transport_option or "both").lower().strip()
+        # Always compare every mode so the traveller can choose; legacy values still work.
+        option = (transport_option or "all").lower().strip()
+        if option in {"both", ""}:
+            option = "all"
         results = []
 
         # ---------------- FLIGHTS ----------------
@@ -331,8 +360,7 @@ class BudgetAgent:
 
         Returns (total_cost | None, is_estimate). Flights are priced as one
         round-trip fare. Train/bus use cheapest outbound + cheapest return of
-        the same mode. Only explicitly 'unverified' provider quotes are skipped;
-        labelled estimates are included and flagged.
+        the same mode. Indicative quotes and labelled estimates are included and flagged.
         """
         options = [i for i in (transport_options or []) if isinstance(i, dict)]
         candidates = []  # (cost, is_estimate)
@@ -342,11 +370,10 @@ class BudgetAgent:
             if item in directional:
                 continue
             status = str(item.get("price_status") or "").lower()
-            if status in {"unverified", "unknown", "indicative"}:
-                continue
             price = item.get("total_price")
             if _numeric(price):
-                candidates.append((float(price), status == "estimate"))
+                # live/verified quotes are firm; everything else is flagged as an estimate
+                candidates.append((float(price), status not in {"verified", "live"}))
 
         if directional:
             return_required = any(i.get("direction") == "return" for i in directional)

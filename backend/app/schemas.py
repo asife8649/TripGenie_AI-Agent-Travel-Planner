@@ -17,7 +17,7 @@ class TravelPlanRequest(BaseModel):
     days: int = Field(default=1, ge=1)
 
     # flight | train | bus | both | all
-    transport_option: str = "both"
+    transport_option: str = "all"
 
     departure_date: Optional[date] = None
     return_date: Optional[date] = None
@@ -29,7 +29,7 @@ class SaveTripRequest(BaseModel):
     budget_per_person: float = Field(..., gt=0)
     travelers: int = Field(default=1, ge=1)
     days: int = Field(default=1, ge=1)
-    transport_option: str = "both"
+    transport_option: str = "all"
     departure_date: Optional[date] = None
     return_date: Optional[date] = None
     total_estimated_cost: Optional[float] = None

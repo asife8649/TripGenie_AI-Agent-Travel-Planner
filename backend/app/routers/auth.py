@@ -10,7 +10,7 @@ from ..database import get_db
 from ..models import User, OTPVerification
 from ..security import hash_password, verify_password, create_access_token
 from ..dependencies import get_current_user
-from ..email_service import send_otp_email
+from ..email_service import send_otp_email, smtp_enabled
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -143,17 +143,17 @@ def register(
     otp = create_otp(db, email)
 
     try:
-        send_otp_email(email, otp)
+        send_otp_email(email, otp, "register")
     except Exception as error:
         print("OTP email delivery failed:", str(error))
         raise HTTPException(
             status_code=503,
-            detail="OTP was created but email delivery failed. Check SMTP configuration or use development mode.",
+            detail="We could not send the verification email. Please try again in a moment.",
         )
 
-    development_mode = os.getenv("SMTP_ENABLED", "false").lower() != "true"
+    development_mode = not smtp_enabled()
     return {
-        "message": "OTP created. Check the backend terminal in development mode, or your email when SMTP is enabled.",
+        "message": "Verification code sent to your email." if not development_mode else "Development mode: the OTP is printed in the backend terminal.",
         "email": email,
         "development_mode": development_mode,
     }
@@ -277,7 +277,7 @@ def forgot_password(
         otp = create_otp(db, email)
 
         try:
-            send_otp_email(email, otp)
+            send_otp_email(email, otp, "reset")
         except Exception as error:
             print("Password reset OTP email delivery failed:", str(error))
             # Keep the response generic so account existence is not disclosed.
@@ -285,7 +285,7 @@ def forgot_password(
 
     return {
         "message": "If this email is registered, an OTP has been sent.",
-        "development_mode": True,
+        "development_mode": not smtp_enabled(),
     }
 
 

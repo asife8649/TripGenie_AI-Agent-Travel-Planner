@@ -215,6 +215,120 @@ def _extract_price(
     return None
 
 
+
+def _first(d, *keys):
+    for k in keys:
+        v = d.get(k) if isinstance(d, dict) else None
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def _parse_flightapi_lookup(data, travelers):
+    """Parser for FlightAPI responses that use id lookups:
+    itineraries[].pricing_options[].price.amount + legs[] / segments[] / carriers[] / places[].
+    Field names are read tolerantly (snake_case and camelCase).
+    FlightAPI quotes the whole party, so the amount is treated as the TOTAL.
+    """
+    if not isinstance(data, dict):
+        return []
+    itineraries = data.get("itineraries")
+    if not isinstance(itineraries, list) or not itineraries:
+        return []
+
+    def by_id(key):
+        return {str(x.get("id")): x for x in (data.get(key) or []) if isinstance(x, dict) and x.get("id") is not None}
+
+    legs, segments, carriers, places = by_id("legs"), by_id("segments"), by_id("carriers"), by_id("places")
+
+    def place_code(pid):
+        p = places.get(str(pid)) or {}
+        return _first(p, "display_code", "displayCode", "iata", "code", "name")
+
+    def carrier_name(cid):
+        c = carriers.get(str(cid)) or {}
+        return _first(c, "name", "display_code", "displayCode")
+
+    def build_leg(leg_id, direction):
+        leg = legs.get(str(leg_id))
+        if not leg:
+            return None
+        seg_ids = _first(leg, "segment_ids", "segmentIds") or []
+        segs = [segments.get(str(i)) for i in seg_ids if segments.get(str(i))]
+        numbers, layovers = [], []
+        for sg in segs:
+            code = ""
+            cid = _first(sg, "marketing_carrier_id", "marketingCarrierId")
+            c = carriers.get(str(cid)) or {}
+            code = _first(c, "display_code", "displayCode", "iata") or ""
+            num = _first(sg, "marketing_flight_number", "marketingFlightNumber", "flight_number") or ""
+            if code or num:
+                numbers.append(f"{code}{num}")
+        for sg in segs[:-1]:
+            code = place_code(_first(sg, "destination_place_id", "destinationPlaceId", "arrival_place_id"))
+            if code:
+                layovers.append(code)
+        cids = _first(leg, "marketing_carrier_ids", "marketingCarrierIds") or []
+        airline = carrier_name(cids[0]) if cids else None
+        minutes = _first(leg, "duration")
+        return {
+            "direction": direction,
+            "from_code": place_code(_first(leg, "origin_place_id", "originPlaceId", "departure_place_id")),
+            "to_code": place_code(_first(leg, "destination_place_id", "destinationPlaceId", "arrival_place_id")),
+            "departure_time": _first(leg, "departure", "departure_time"),
+            "arrival_time": _first(leg, "arrival", "arrival_time"),
+            "airline": airline,
+            "flight_numbers": numbers,
+            "stops": _first(leg, "stop_count", "stopCount") if _first(leg, "stop_count", "stopCount") is not None else max(0, len(segs) - 1),
+            "layover_airports": layovers,
+            "duration_minutes": minutes,
+            "duration_text": _fmt_minutes_flight(minutes),
+        }
+
+    results = []
+    for it in itineraries:
+        if not isinstance(it, dict):
+            continue
+        options = _first(it, "pricing_options", "pricingOptions") or []
+        amounts = []
+        for opt in options:
+            price = opt.get("price") if isinstance(opt, dict) else None
+            amount = _first(price, "amount") if isinstance(price, dict) else (price if isinstance(price, (int, float)) else None)
+            try:
+                if amount is not None and float(amount) > 0:
+                    amounts.append(float(amount))
+            except (TypeError, ValueError):
+                pass
+        if not amounts:
+            continue
+        total = min(amounts)
+        leg_ids = _first(it, "leg_ids", "legIds") or []
+        parsed_legs = [
+            leg for leg in (
+                build_leg(leg_ids[0], "outbound") if len(leg_ids) > 0 else None,
+                build_leg(leg_ids[1], "return") if len(leg_ids) > 1 else None,
+            ) if leg
+        ]
+        results.append({
+            "mode": "flight",
+            "transport_type": "flight",
+            "price_per_person": round(total / max(1, travelers), 2),
+            "total_price": total,
+            "currency": "INR",
+            "travel_time": None,
+            "source_airport": parsed_legs[0]["from_code"] if parsed_legs else None,
+            "destination_airport": parsed_legs[0]["to_code"] if parsed_legs else None,
+            "fare_available": True,
+            "provider": "FlightAPI",
+            "price_status": "indicative",
+            "price_type": "indicative",
+            "trip_type": "round_trip",
+            "legs": parsed_legs,
+        })
+    results.sort(key=lambda r: r["total_price"])
+    return results[:5]
+
+
 # ============================================================
 # PARSE FLIGHT RESPONSE
 # ============================================================
@@ -233,6 +347,15 @@ def _parse_flight_response(
         dict
     ):
         return []
+
+    try:
+        modern = _parse_flightapi_lookup(data, travelers)
+    except Exception as error:
+        print("FlightAPI lookup parser failed:", error)
+        modern = []
+    if modern:
+        return modern
+    print("FlightAPI: unfamiliar response shape, top-level keys =", list(data.keys())[:12])
 
     itineraries = data.get(
         "itineraries",
@@ -311,7 +434,7 @@ def _parse_flight_response(
         )
     )
 
-    return results[:10]
+    return results[:5]
 
 
 # ============================================================
@@ -462,7 +585,7 @@ def _parse_ignav_response(data: dict, travelers: int):
     results.sort(key=lambda item: item.get("total_price", float("inf")))
     # Keep the UI focused on the ten cheapest results rather than rendering
     # every itinerary returned by the provider.
-    return results[:10]
+    return results[:5]
 
 
 def _search_ignav_round_trip(

@@ -11,7 +11,7 @@ const initial = {
   days: 3,
   departure_date: "",
   return_date: "",
-  transport_option: "both",
+  transport_option: "all",
 };
 
 export default function Planner() {
@@ -19,6 +19,7 @@ export default function Planner() {
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [liveTotals, setLiveTotals] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -41,6 +42,7 @@ export default function Planner() {
     setError("");
     setSaved(false);
     setPlan(null);
+    setLiveTotals(null);
 
     try {
       const payload = {
@@ -49,7 +51,7 @@ export default function Planner() {
         budget_per_person: Number(form.budget_per_person),
         travelers: Number(form.travelers),
         days: Number(form.days),
-        transport_option: form.transport_option,
+        transport_option: "all",
         departure_date: form.departure_date,
         return_date: form.return_date,
       };
@@ -86,8 +88,8 @@ export default function Planner() {
         budget_per_person: Number(form.budget_per_person),
         travelers: Number(form.travelers),
         days: Number(form.days),
-        total_estimated_cost: plan.total_estimated_cost ?? null,
-        remaining_budget: plan.remaining_budget ?? null,
+        total_estimated_cost: liveTotals?.total ?? plan.total_estimated_cost ?? null,
+        remaining_budget: liveTotals?.remaining ?? plan.remaining_budget ?? null,
       });
 
       setSaved(true);
@@ -195,21 +197,11 @@ export default function Planner() {
           />
         </label>
 
-        <label>
-          Transport
-          <select
-            value={form.transport_option}
-            onChange={(e) =>
-              update("transport_option", e.target.value)
-            }
-          >
-            <option value="flight">Flight</option>
-            <option value="train">Train</option>
-            <option value="bus">Bus</option>
-            <option value="both">Train + Bus</option>
-            <option value="all">Flight + Train + Bus</option>
-          </select>
-        </label>
+        <div className="tg-compare-note">
+          <b>Transport</b>
+          <span>✈️ Flight · 🚆 Train · 🚌 Bus</span>
+          <small>We compare all three — you choose after the results.</small>
+        </div>
 
         <button
           className="primary generate"
@@ -240,7 +232,7 @@ export default function Planner() {
             )}
           </div>
 
-          <PlanResult plan={plan} />
+          <PlanResult plan={plan} onTotalsChange={setLiveTotals} />
         </>
       )}
     </main>

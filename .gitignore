@@ -1,27 +1,12 @@
-
-# Secrets
+# Secrets and local environments
 .env
 .env.*
 !.env.example
-**/.env
-**/.env.*
-!**/.env.example
-
-# Python
-__pycache__/
+**/.venv/
+**/venv/
+**/node_modules/
+**/__pycache__/
 *.py[cod]
-.venv/
-venv/
-
-# Node
-node_modules/
-dist/
-
-# Local files
-*.log
-.DS_Store
-
-# Private certificates
-*.pem
-*.key
-*.p12
+backend/certificates/*
+!backend/certificates/.gitkeep
+frontend/dist/

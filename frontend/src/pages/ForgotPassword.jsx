@@ -53,7 +53,7 @@ export default function ForgotPassword() {
         {stage !== "done" && <button className="primary" type="submit" disabled={loading}>{loading ? "Please wait..." : stage === "request" ? "Send reset OTP" : "Reset password"}</button>}
         {message && <div className="success">{message}</div>}
         {error && <div className="error">{error}</div>}
-        <small>If SMTP email is disabled for local development, the OTP is printed in the backend terminal. Otherwise, check your email inbox.</small>
+        <small>We'll email a 6-digit code if this address is registered. Check your spam folder too.</small>
         <p><Link to="/login">Back to login</Link></p>
       </form>
     </main>

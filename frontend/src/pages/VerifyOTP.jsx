@@ -29,7 +29,7 @@ export default function VerifyOTP() {
         <input className="otp" maxLength="6" value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, ""))} placeholder="000000" />
         <button className="primary">Verify OTP</button>
         {msg && <div className="error">{msg}</div>}
-        <small>During development, the OTP is printed in the backend terminal unless SMTP is enabled.</small>
+        <small>Enter the 6-digit code we emailed you. It expires in 10 minutes. Check your spam folder too.</small>
       </form>
     </main>
   );

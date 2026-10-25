@@ -170,3 +170,26 @@ button:disabled {
   .tg-break{grid-template-columns:1fr 1fr}.tg-trip-head{flex-direction:column}.tg-price{align-items:flex-start;text-align:left}
   .tg-time{font-size:18px}.tg-timeline{grid-template-columns:1fr 1fr 1fr;gap:6px}
 }
+
+/* ---------- selectable options + travel-by chooser ---------- */
+.tg-modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.tg-mode{position:relative;border:2px solid #e4e8f2;background:#fff;border-radius:16px;padding:14px 12px;cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;color:inherit}
+.tg-mode:hover{border-color:#cfc9ff}
+.tg-mode.on{border-color:#6b5cff;background:#f6f5ff;box-shadow:0 8px 20px #6b5cff22}
+.tg-mode-ico{font-size:24px}.tg-mode b{font-size:16px}.tg-mode small{color:#59667b;font-size:13px;font-weight:700}
+.tg-mode em{position:absolute;right:10px;top:10px;font-style:normal;font-size:10.5px;font-weight:800;background:#e8f8ef;color:#16804b;border-radius:99px;padding:2px 8px}
+.tg-selectable{cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.tg-selectable:hover{border-color:#cfc9ff}
+.tg-selectable.selected{border:2px solid #6b5cff;background:#fbfaff;box-shadow:0 10px 24px #6b5cff1f}
+.tg-select{display:inline-block;font-size:11px;font-weight:800;border:1px solid #d7dbe8;color:#59667b;border-radius:99px;padding:3px 10px;background:#fff}
+.tg-select.on{background:#6b5cff;border-color:#6b5cff;color:#fff}
+button.tg-fare-chip{border:1px solid transparent;cursor:pointer;font:inherit}
+button.tg-fare-chip:hover{border-color:#cfc9ff}
+button.tg-fare-chip.on{background:#6b5cff;color:#fff}button.tg-fare-chip.on b{color:#fff}
+.tg-hotel .tg-select{align-self:flex-start}
+
+.tg-mode.off{opacity:.45;cursor:not-allowed;background:#f6f7fb}
+.tg-compare-note{display:flex;flex-direction:column;gap:3px;background:#f6f5ff;border:1px dashed #cfc9ff;border-radius:14px;padding:12px 14px;justify-content:center}
+.tg-compare-note b{font-size:13px;color:#33405a}.tg-compare-note span{font-weight:800;color:#5b4bdb}.tg-compare-note small{color:#738096}
+.tg-meta-row{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}
+.tg-tag{background:#eef0f7;color:#4a566d;border-radius:8px;padding:4px 9px;font-size:12px;font-weight:700}

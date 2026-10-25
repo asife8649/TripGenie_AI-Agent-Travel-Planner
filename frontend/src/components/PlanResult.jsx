@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   inr, fmtTime, fmtDay, fmtDayLong, fmtMinutes, dayOffset, nightsOf,
   priceKind, PRICE_LABEL, modeOf,
 } from "../utils/format";
 import { downloadPlanPdf } from "../utils/pdfReport";
+import { resolveSelection, priceOf } from "../utils/selection";
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 
@@ -45,13 +46,17 @@ function Timeline({ fromTime, fromPlace, fromSub, toTime, toPlace, toSub, middle
   );
 }
 
-function FlightCard({ flight, index }) {
+function SelectPill({ selected }) {
+  return <span className={`tg-select ${selected ? "on" : ""}`}>{selected ? "✓ Selected" : "Select"}</span>;
+}
+
+function FlightCard({ flight, index, selected, onSelect }) {
   const legs = arr(flight.legs);
   return (
-    <article className="tg-trip-card">
+    <article className={`tg-trip-card tg-selectable ${selected ? "selected" : ""}`} onClick={onSelect}>
       <header className="tg-trip-head">
         <div>
-          <span className="tg-chip">Option {index + 1}</span>
+          <span className="tg-chip">Option {index + 1}</span> <SelectPill selected={selected} />
           <h4>{legs[0]?.airline || flight.airline || "Flight"}{flight.provider ? <small> · via {flight.provider}</small> : null}</h4>
         </div>
         <div className="tg-price">
@@ -92,24 +97,26 @@ function FlightCard({ flight, index }) {
   );
 }
 
-function GroundCard({ item }) {
+function GroundCard({ item, travelers, selected, onSelect, cls, onClass }) {
   const mode = modeOf(item);
   const classFares = arr(item.class_fares);
   const noSchedule = !item.departure_time;
   const segments = arr(item.segments);
+  const price = priceOf(item, cls, travelers);
   return (
-    <article className="tg-trip-card tg-ground">
+    <article className={`tg-trip-card tg-ground tg-selectable ${selected ? "selected" : ""}`} onClick={onSelect}>
       <header className="tg-trip-head">
         <div>
+          <SelectPill selected={selected} />
           <h4>
-            {MODE_META[mode]?.icon} {item.operator || (mode === "train" ? "Train" : "Bus")}
+            {MODE_META[mode]?.icon} {item.operator || (mode === "train" ? "Train name not available" : "Bus operator not available")}{item.service_name && item.service_name !== item.operator ? <small className="tg-muted"> · {item.service_name}</small> : null}
             {item.vehicle_number && <span className="tg-flightno">#{item.vehicle_number}</span>}
           </h4>
           {item.changes > 0 && <small className="tg-muted">{item.changes} change{item.changes > 1 ? "s" : ""}</small>}
         </div>
         <div className="tg-price">
-          <b>{inr(item.price_per_person)}<em> / person</em></b>
-          <small>{inr(item.total_price)} total</small>
+          <b>{inr(price.perPerson)}<em> / person</em></b>
+          <small>{inr(price.total)} total{price.cls ? ` · ${price.cls}` : ""}</small>
           <PriceBadge item={item} />
         </div>
       </header>
@@ -117,7 +124,10 @@ function GroundCard({ item }) {
       {noSchedule ? (
         <div className="tg-noschedule">
           <b>≈ {item.travel_time?.replace("≈ ", "") || "—"}</b>
-          <span>Timetable not available from the route provider. Check exact departure times on the official site below.</span>
+          <span>
+            Exact train name and timetable are not available from the current data source.
+            {mode === "train" ? " Add RAIL_API_KEY on the backend to get real train names and times." : " Add APIFY_TOKEN on the backend for live bus names, times and fares."}
+          </span>
         </div>
       ) : (
         <Timeline
@@ -128,8 +138,18 @@ function GroundCard({ item }) {
         />
       )}
 
+      {(item.bus_type || item.rating || item.seats_available != null || arr(item.boarding_points).length > 0) && (
+        <div className="tg-meta-row">
+          {item.bus_type && <span className="tg-tag">{item.bus_type}</span>}
+          {item.rating ? <span className="tg-tag">⭐ {item.rating}{item.rating_count ? ` (${item.rating_count})` : ""}</span> : null}
+          {item.seats_available != null && <span className="tg-tag">💺 {item.seats_available} seats left</span>}
+          {arr(item.boarding_points).length > 0 && <span className="tg-tag">Board: {item.boarding_points[0]}</span>}
+          {arr(item.dropping_points).length > 0 && <span className="tg-tag">Drop: {item.dropping_points[0]}</span>}
+        </div>
+      )}
+
       {segments.length > 1 && (
-        <details className="tg-details">
+        <details className="tg-details" onClick={(e) => e.stopPropagation()}>
           <summary>Route details ({segments.length} legs)</summary>
           {segments.map((s, i) => (
             <p key={i}>
@@ -142,9 +162,11 @@ function GroundCard({ item }) {
       {classFares.length > 0 && (
         <div className="tg-fares">
           {classFares.map((c) => (
-            <span key={c.class} className="tg-fare-chip">
+            <button type="button" key={c.class}
+              className={`tg-fare-chip ${price.cls === c.class ? "on" : ""}`}
+              onClick={(e) => { e.stopPropagation(); onClass(c.class); }}>
               <b>{c.class}</b> {inr(c.fare)}
-            </span>
+            </button>
           ))}
         </div>
       )}
@@ -153,19 +175,20 @@ function GroundCard({ item }) {
   );
 }
 
-function HotelCard({ hotel, nights, isBudgetPick, photoUrl }) {
+function HotelCard({ hotel, nights, selected, onSelect, photoUrl }) {
   const kind = priceKind(hotel);
   const perRoom = hotel.price_per_room_night ?? hotel.price_per_night;
   const img = hotel.image_url || (hotel.photo_names?.[0] ? photoUrl(hotel.photo_names[0], 700) : null);
   const link = hotel.booking_url || hotel.google_maps_url;
   return (
-    <article className="tg-hotel">
+    <article className={`tg-hotel tg-selectable ${selected ? "selected" : ""}`} onClick={onSelect}>
       <div className="tg-hotel-img" style={img ? { backgroundImage: `url("${img}")` } : undefined}>
         {!img && <span>🏨</span>}
-        {isBudgetPick && <em className="tg-pick">Used for budget</em>}
+        {selected && <em className="tg-pick">✓ Selected for budget</em>}
       </div>
       <div className="tg-hotel-body">
         <h4>{hotel.hotel_name}</h4>
+        <SelectPill selected={selected} />
         <p className="tg-hotel-meta">
           {hotel.rating ? <span className="tg-rating">⭐ {hotel.rating}</span> : null}
           {hotel.user_rating_count ? <span>{Number(hotel.user_rating_count).toLocaleString("en-IN")} reviews</span> : null}
@@ -184,7 +207,7 @@ function HotelCard({ hotel, nights, isBudgetPick, photoUrl }) {
             ? <>{hotel.nights ?? nights} night(s) × {hotel.rooms ?? 1} room(s) = <b>{inr(hotel.total_price)}</b></>
             : "Same-day trip — no stay needed"}
         </p>
-        <div className="tg-links">
+        <div className="tg-links" onClick={(e) => e.stopPropagation()}>
           {hotel.google_maps_url && <a href={hotel.google_maps_url} target="_blank" rel="noreferrer">🗺️ Map</a>}
           {link && link !== hotel.google_maps_url && <a href={link} target="_blank" rel="noreferrer">View / book ↗</a>}
         </div>
@@ -193,21 +216,35 @@ function HotelCard({ hotel, nights, isBudgetPick, photoUrl }) {
   );
 }
 
-export default function PlanResult({ plan }) {
+export default function PlanResult({ plan: rawPlan, onTotalsChange }) {
   // Hooks must run before any early return.
   const [selectedPlace, setSelectedPlace] = useState(null);
   const [photoIndex, setPhotoIndex] = useState(0);
-  const [tab, setTab] = useState(null);
+  const [mode, setMode] = useState(null);      // flight | train | bus (null = cheapest)
+  const [pick, setPick] = useState({});        // which specific option per leg
+  const [cls, setCls] = useState({});          // chosen class (SL / 3A / Non-AC ...)
+  const [hotelPick, setHotelPick] = useState(null);
 
-  const options = arr(plan?.transport_options);
-  const grouped = useMemo(() => ({
-    flight: options.filter((o) => modeOf(o) === "flight"),
-    train: options.filter((o) => modeOf(o) === "train"),
-    bus: options.filter((o) => modeOf(o) === "bus"),
-  }), [options]);
+  const sel = useMemo(
+    () => (rawPlan ? resolveSelection(rawPlan, { mode, pick, cls, hotel: hotelPick }) : null),
+    [rawPlan, mode, pick, cls, hotelPick],
+  );
 
-  if (!plan) return null;
+  // A new plan resets all choices.
+  useEffect(() => {
+    setMode(null); setPick({}); setCls({}); setHotelPick(null);
+  }, [rawPlan]);
 
+  // Tell the parent (Save button) the live total.
+  useEffect(() => {
+    if (sel && onTotalsChange) {
+      onTotalsChange({ total: sel.plan.total_estimated_cost, remaining: sel.plan.remaining_budget });
+    }
+  }, [sel, onTotalsChange]);
+
+  if (!rawPlan || !sel) return null;
+
+  const plan = sel.plan; // plan with budget recalculated from the user's choices
   const hotels = arr(plan.hotels);
   const places = arr(plan.places);
   const itinerary = arr(plan.itinerary);
@@ -218,46 +255,48 @@ export default function PlanResult({ plan }) {
   const photoUrl = (name, width = 1200) =>
     `${apiBase}/places/photo?photo_name=${encodeURIComponent(name)}&max_width=${width}`;
 
-  const availableModes = ["flight", "train", "bus"].filter((m) => grouped[m].length > 0);
-  const activeTab = availableModes.includes(tab) ? tab : availableModes[0];
-
+  const activeMode = sel.mode;
   const total = Number(plan.total_budget) || 0;
   const cost = Number(plan.total_estimated_cost);
   const ratio = total > 0 && Number.isFinite(cost) ? Math.min(100, Math.max(0, (cost / total) * 100)) : 0;
   const remaining = plan.remaining_budget;
   const over = Number(remaining) < 0;
 
-  const breakdownRows = b
-    ? [
-        { label: "Transport", note: b.missing_transport_price ? "no fare found" : b.transport_is_estimate ? "estimate" : "quoted", value: b.missing_transport_price ? null : b.transport, color: "#6b5cff" },
-        { label: "Hotel", note: `${b.hotel_nights} night(s) · ${b.hotel_rooms} room(s)${b.hotel_price_type && b.hotel_price_type !== "live" ? " · estimate" : ""}`, value: b.hotel, color: "#14b8a6" },
-        { label: "Food", note: "₹800 / person / day", value: b.food_estimate, color: "#f59e0b" },
-        { label: "Local travel", note: "₹500 / person / day", value: b.local_transport_estimate, color: "#ec4899" },
-      ]
-    : [];
-  const rowsTotal = breakdownRows.reduce((s, r) => s + (Number(r.value) || 0), 0) || 1;
-
+  const modeLabel = activeMode ? MODE_META[activeMode].label.replace(/s$/, "") : "Transport";
+  const breakdownRows = [
+    { label: `Transport · ${modeLabel}`, note: b.missing_transport_price ? "no fare found" : b.transport_is_estimate ? "includes estimate" : "quoted fare", value: b.missing_transport_price ? null : b.transport, color: "#6b5cff" },
+    { label: "Hotel", note: `${b.hotel_nights} night(s) · ${b.hotel_rooms} room(s)${b.hotel_price_type && b.hotel_price_type !== "live" ? " · estimate" : ""}`, value: b.hotel, color: "#14b8a6" },
+    { label: "Food", note: "₹800 / person / day", value: b.food_estimate, color: "#f59e0b" },
+    { label: "Local travel", note: "₹500 / person / day", value: b.local_transport_estimate, color: "#ec4899" },
+  ];
+  const rowsTotal = breakdownRows.reduce((s2, r) => s2 + (Number(r.value) || 0), 0) || 1;
   const links = plan.transport_search_links || {};
 
-  const renderGround = (items) => {
-    const out = items.filter((i) => i.direction !== "return");
-    const back = items.filter((i) => i.direction === "return");
-    return (
-      <>
-        {out.length > 0 && (
-          <>
-            <h5 className="tg-dir">Outbound · {fmtDayLong(plan.departure_date)}</h5>
-            {out.map((it, i) => <GroundCard item={it} key={`o${i}`} />)}
-          </>
-        )}
-        {back.length > 0 && (
-          <>
-            <h5 className="tg-dir">Return · {fmtDayLong(plan.return_date)}</h5>
-            {back.map((it, i) => <GroundCard item={it} key={`r${i}`} />)}
-          </>
-        )}
-      </>
-    );
+  const choose = (key, idx) => setPick((p) => ({ ...p, [key]: idx }));
+  const chooseClass = (key, idx, c) => { setCls((p) => ({ ...p, [`${key}:${idx}`]: c })); choose(key, idx); };
+
+  const renderGround = (m) => {
+    const lists = [
+      ["outbound", sel.g[m].outbound, `Outbound · ${fmtDayLong(plan.departure_date)}`],
+      ["return", sel.g[m].return, `Return · ${fmtDayLong(plan.return_date)}`],
+    ];
+    return lists.map(([dir, list, title]) =>
+      list.length === 0 ? null : (
+        <React.Fragment key={dir}>
+          <h5 className="tg-dir">{title}</h5>
+          {list.map((it, i) => {
+            const key = `${m}:${dir}`;
+            const chosen = sel.items.find((x) => x.key === key);
+            const isSel = activeMode === m && chosen?.idx === i;
+            return (
+              <GroundCard key={`${key}${i}`} item={it} travelers={plan.travelers}
+                selected={isSel} cls={cls[`${key}:${i}`]}
+                onSelect={() => { setMode(m); choose(key, i); }}
+                onClass={(c) => { setMode(m); chooseClass(key, i, c); }} />
+            );
+          })}
+        </React.Fragment>
+      ));
   };
 
   return (
@@ -273,7 +312,7 @@ export default function PlanResult({ plan }) {
             <small>FROM</small>
             <h2>{plan.source}</h2>
           </div>
-          <div className="tg-route-line"><span>✈</span></div>
+          <div className="tg-route-line"><span>{activeMode ? MODE_META[activeMode].icon : "✈"}</span></div>
           <div className="tg-route-right">
             <small>TO</small>
             <h2>{plan.destination}</h2>
@@ -287,11 +326,11 @@ export default function PlanResult({ plan }) {
         </div>
       </section>
 
-      {/* ---------------- Budget ---------------- */}
+      {/* ---------------- Budget (live, follows your choices) ---------------- */}
       <section className="tg-card tg-budget">
         <div className="tg-budget-top">
           <div>
-            <small className="tg-label">ESTIMATED TRIP COST</small>
+            <small className="tg-label">ESTIMATED TRIP COST · UPDATES AS YOU CHOOSE</small>
             <h3>{inr(plan.total_estimated_cost)} <span>of {inr(plan.total_budget)}</span></h3>
           </div>
           {remaining !== null && remaining !== undefined && (
@@ -302,56 +341,67 @@ export default function PlanResult({ plan }) {
         </div>
         <div className="tg-bar"><i className={over ? "over" : ""} style={{ width: `${ratio}%` }} /></div>
 
-        {b && (
-          <>
-            <div className="tg-stack">
-              {breakdownRows.map((r) => (
-                <i key={r.label} style={{ width: `${((Number(r.value) || 0) / rowsTotal) * 100}%`, background: r.color }} />
-              ))}
+        <div className="tg-stack">
+          {breakdownRows.map((r) => (
+            <i key={r.label} style={{ width: `${((Number(r.value) || 0) / rowsTotal) * 100}%`, background: r.color }} />
+          ))}
+        </div>
+        <div className="tg-break">
+          {breakdownRows.map((r) => (
+            <div key={r.label}>
+              <span><i style={{ background: r.color }} />{r.label}</span>
+              <b>{r.value === null ? "Not included" : inr(r.value)}</b>
+              <small>{r.note}</small>
             </div>
-            <div className="tg-break">
-              {breakdownRows.map((r) => (
-                <div key={r.label}>
-                  <span><i style={{ background: r.color }} />{r.label}</span>
-                  <b>{r.value === null ? "Not included" : inr(r.value)}</b>
-                  <small>{r.note}</small>
-                </div>
-              ))}
-            </div>
-            {arr(b.notes).length > 0 && (
-              <ul className="tg-notes">
-                {arr(b.notes).map((n, i) => <li key={i}>{n}</li>)}
-              </ul>
-            )}
-          </>
+          ))}
+        </div>
+        {arr(b.notes).length > 0 && (
+          <ul className="tg-notes">
+            {arr(b.notes).map((n, i) => <li key={i}>{n}</li>)}
+          </ul>
         )}
       </section>
 
       {/* ---------------- Transport ---------------- */}
       <section className="tg-card">
         <div className="tg-section-head">
-          <h3>🧭 Transport</h3>
-          {availableModes.length > 0 && (
-            <div className="tg-tabs" role="tablist">
-              {availableModes.map((m) => (
-                <button key={m} role="tab" aria-selected={activeTab === m}
-                  className={activeTab === m ? "active" : ""} onClick={() => setTab(m)}>
-                  {MODE_META[m].icon} {MODE_META[m].label} <em>{grouped[m].length}</em>
-                </button>
-              ))}
-            </div>
-          )}
+          <h3>🧭 How will you travel?</h3>
         </div>
 
-        {availableModes.length === 0 ? (
+        {sel.modesAvailable.length === 0 ? (
           <div className="tg-empty">
             <b>No transport options were returned.</b>
             <p>Use the official search links below to compare fares and timings.</p>
           </div>
-        ) : activeTab === "flight" ? (
-          grouped.flight.slice(0, 6).map((f, i) => <FlightCard flight={f} index={i} key={i} />)
         ) : (
-          renderGround(grouped[activeTab])
+          <>
+            <div className="tg-modes">
+              {["flight", "train", "bus"].map((m) => {
+                const has = sel.modesAvailable.includes(m);
+                const t = has ? sel.modeSummary[m].total : null;
+                return (
+                  <button type="button" key={m} disabled={!has}
+                    className={`tg-mode ${activeMode === m ? "on" : ""} ${has ? "" : "off"}`} onClick={() => setMode(m)}>
+                    <span className="tg-mode-ico">{MODE_META[m].icon}</span>
+                    <b>{MODE_META[m].label.replace(/s$/, "")}</b>
+                    <small>{!has ? "no data" : t !== null ? `${inr(t)} total` : "price n/a"}</small>
+                    {has && sel.cheapestMode === m && sel.modesAvailable.length > 1 && <em>Cheapest</em>}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="tg-muted tg-small" style={{ margin: "10px 0 0" }}>
+              Pick a mode, then tap the exact {activeMode === "flight" ? "flight" : activeMode === "bus" ? "bus" : "train"} (and class) you want — the budget above recalculates instantly.
+            </p>
+
+            {activeMode === "flight"
+              ? sel.g.flight.slice(0, 5).map((f, i) => (
+                  <FlightCard flight={f} index={i} key={i}
+                    selected={sel.items[0]?.idx === i}
+                    onSelect={() => { setMode("flight"); choose("flight", i); }} />
+                ))
+              : renderGround(activeMode)}
+          </>
         )}
 
         {arr(plan.transport_notes).map((n, i) => <p className="tg-note" key={i}>ℹ️ {n}</p>)}
@@ -375,7 +425,7 @@ export default function PlanResult({ plan }) {
           <div className="tg-hotel-grid">
             {hotels.map((h, i) => (
               <HotelCard key={`${h.hotel_name}-${i}`} hotel={h} nights={nights} photoUrl={photoUrl}
-                isBudgetPick={b?.hotel_name && b.hotel_name === h.hotel_name} />
+                selected={sel.hotelIdx === i} onSelect={() => setHotelPick(i)} />
             ))}
           </div>
         )}

@@ -66,7 +66,7 @@ export function downloadPlanPdf(plan) {
   };
 
   const section = (title, subtitle) => {
-    ensure(20);
+    ensure(48); // keep a heading together with the start of its table
     doc.setFillColor(...C.brand);
     doc.roundedRect(M, y, 1.8, 7, 0.9, 0.9, "F");
     text(title, M + 5, y + 5.4, { size: 13, bold: true });
@@ -178,6 +178,42 @@ export function downloadPlanPdf(plan) {
   }
 
   // ------------------------------------------------------------------
+  // Your selected trip
+  // ------------------------------------------------------------------
+  const sel = plan.selection || {};
+  const selectedItems = arr(sel.items);
+  const isSelected = (item) => selectedItems.some((x) => x.item === item);
+  const MODE_NAME = { flight: "Flight", train: "Train", bus: "Bus" };
+
+  if (sel.mode && (selectedItems.length || sel.hotel)) {
+    section("Your Selected Trip", "The budget in this PDF is calculated from these choices.");
+    const rows = selectedItems.map((x) => {
+      const t = x.item;
+      const when = x.direction === "both" ? "Round trip" : x.direction === "return" ? "Return" : "Outbound";
+      const detail = (t.legs && t.legs.length)
+        ? t.legs.map((l) => `${l.airline || ""} ${arr(l.flight_numbers).join("/")}  ${l.from_code}-${l.to_code}  ${fmtDateTime(l.departure_time)}`).join("\n")
+        : `${t.operator || MODE_NAME[sel.mode]}${t.vehicle_number ? " #" + t.vehicle_number : ""}\n${t.from_name || ""} to ${t.to_name || ""}${t.departure_time ? "  " + fmtDateTime(t.departure_time) : ""}`;
+      return [
+        `${MODE_NAME[sel.mode]}\n${when}`,
+        detail,
+        `${rs(x.total)}${x.cls ? "\nClass " + x.cls : ""}\n(${PRICE_LABEL[x.kind] || ""})`,
+      ];
+    });
+    if (sel.hotel) {
+      rows.push([
+        "Hotel",
+        `${sel.hotel.hotel_name}\n${plan.budget_breakdown?.hotel_nights ?? ""} night(s) x ${plan.budget_breakdown?.hotel_rooms ?? ""} room(s) at ${rs(sel.hotel.price_per_room_night ?? sel.hotel.price_per_night)} per room/night`,
+        `${rs(plan.budget_breakdown?.hotel)}\n(${PRICE_LABEL[priceKind(sel.hotel)] || "Estimate"})`,
+      ]);
+    }
+    table({
+      head: [["Choice", "Details", "Cost"]],
+      body: rows,
+      columnStyles: { 0: { cellWidth: 26, fontStyle: "bold" }, 2: { cellWidth: 38, halign: "right" } },
+    });
+  }
+
+  // ------------------------------------------------------------------
   // Transport
   // ------------------------------------------------------------------
   const options = arr(plan.transport_options);
@@ -185,13 +221,14 @@ export function downloadPlanPdf(plan) {
   const trains = options.filter((o) => modeOf(o) === "train");
   const buses = options.filter((o) => modeOf(o) === "bus");
 
+  const renderFlights = () => {
   if (flights.length) {
     section("Flights", "Round-trip fares with airline, flight number and real departure / arrival times.");
     flights.slice(0, 3).forEach((f, idx) => {
       ensure(30);
       const kind = priceKind(f);
       text(
-        `Option ${idx + 1}:  ${rs(f.total_price)} total  (${rs(f.price_per_person)} per person)  -  ${PRICE_LABEL[kind]}`,
+        `Option ${idx + 1}${isSelected(f) ? " [SELECTED]" : ""}:  ${rs(f.total_price)} total  (${rs(f.price_per_person)} per person)  -  ${PRICE_LABEL[kind]}`,
         M, y + 3, { size: 9, bold: true, color: kind === "live" ? C.good : C.amber },
       );
       y += 6;
@@ -220,6 +257,7 @@ export function downloadPlanPdf(plan) {
       if (f.airport_note) note(f.airport_note);
     });
   }
+  };
 
   const groundTable = (items, title, subtitle) => {
     if (!items.length) return;
@@ -233,8 +271,8 @@ export function downloadPlanPdf(plan) {
           ? arr(t.class_fares).map((c) => `${c.class}: ${rs(c.fare)}`).join("\n")
           : "";
         return [
-          t.direction === "return" ? "Return" : "Outbound",
-          `${t.operator || (modeOf(t) === "train" ? "Train" : "Bus")}${t.vehicle_number ? "\n#" + t.vehicle_number : ""}`,
+          `${t.direction === "return" ? "Return" : "Outbound"}${isSelected(t) ? "\n[Selected]" : ""}`,
+          `${t.operator || (modeOf(t) === "train" ? "Train name n/a" : "Bus")}${t.vehicle_number ? "\n#" + t.vehicle_number : ""}${t.bus_type ? "\n" + t.bus_type : ""}${t.rating ? "\nRating " + t.rating : ""}${t.seats_available != null ? "\n" + t.seats_available + " seats left" : ""}`,
           `${t.from_name || "-"}\n${t.departure_time ? fmtDateTime(t.departure_time) : "Time not available"}`,
           `${t.to_name || "-"}\n${t.arrival_time ? fmtDateTime(t.arrival_time) : "Time not available"}`,
           t.travel_time || fmtMinutes(t.duration_minutes) || "-",
@@ -244,15 +282,21 @@ export function downloadPlanPdf(plan) {
     table({
       head: [["Leg", "Operator", "From / Departs", "To / Arrives", "Duration", "Fare per person"]],
       body: rows,
-      columnStyles: { 0: { cellWidth: 17 }, 4: { cellWidth: 22 }, 5: { cellWidth: 36 } },
+      columnStyles: { 0: { cellWidth: 19 }, 1: { cellWidth: 34 }, 4: { cellWidth: 20 }, 5: { cellWidth: 34 } },
     });
     if (items.some((t) => priceKind(t) === "estimate")) {
       note("Fares marked 'Estimate' are distance-based approximations, not live quotes. Check the final fare on the official booking site.");
     }
   };
 
-  groundTable(trains, "Trains", "Stations, clock times and fare per person.");
-  groundTable(buses, "Buses", "Pick-up / drop points, times and fare per person.");
+  const renderers = {
+    flight: renderFlights,
+    train: () => groundTable(trains, "Trains", "Stations, clock times and fare per person."),
+    bus: () => groundTable(buses, "Buses", "Pick-up / drop points, times and fare per person."),
+  };
+  const order = ["flight", "train", "bus"];
+  if (sel.mode) order.sort((x, y) => (y === sel.mode) - (x === sel.mode));
+  order.forEach((m) => renderers[m]());
 
   arr(plan.transport_notes).forEach((n) => note(n, C.amber));
 
@@ -265,7 +309,7 @@ export function downloadPlanPdf(plan) {
     table({
       head: [["Hotel", "Rating", "Per room / night", "Stay", "Total", "Price type"]],
       body: hotels.slice(0, 8).map((h) => [
-        `${h.hotel_name || "Hotel"}${h.address ? "\n" + String(h.address).slice(0, 70) : ""}`,
+        `${sel.hotel === h ? "[Selected] " : ""}${h.hotel_name || "Hotel"}${h.address ? "\n" + String(h.address).slice(0, 70) : ""}`,
         h.rating ? `${h.rating}${h.user_rating_count ? " (" + h.user_rating_count + ")" : ""}` : "-",
         rs(h.price_per_room_night ?? h.price_per_night),
         `${h.nights ?? nights} night(s) x ${h.rooms ?? 1} room(s)`,
@@ -289,7 +333,7 @@ export function downloadPlanPdf(plan) {
     table({
       head: [["Item", "Details", "Amount"]],
       body: [
-        ["Transport", b.missing_transport_price ? "No usable fare found" : `Cheapest complete option${kindText(b.transport_is_estimate)}`, b.missing_transport_price ? "Not included" : rs(b.transport)],
+        [`Transport${b.transport_mode ? " (" + b.transport_mode + ")" : ""}`, b.missing_transport_price ? "No usable fare found" : `Selected option${b.return_missing ? ", outbound only" : ""}${kindText(b.transport_is_estimate)}`, b.missing_transport_price ? "Not included" : rs(b.transport)],
         ["Hotel", `${b.hotel_nights} night(s) x ${b.hotel_rooms} room(s)${b.hotel_name ? " - " + b.hotel_name : ""}${b.hotel_price_type && b.hotel_price_type !== "live" ? " (estimate)" : ""}`, rs(b.hotel)],
         ["Food", "Rs. 800 per person per day", rs(b.food_estimate)],
         ["Local transport", "Rs. 500 per person per day", rs(b.local_transport_estimate)],
